@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neon Dodge — one prompt game</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #07070f; height: 100%; overflow: hidden; }
+  canvas { display: block; margin: 0 auto; background: #07070f; }
+</style>
+</head>
+<body>
+<canvas id="game" width="1280" height="720"></canvas>
+<script>
+'use strict';
+// Neon Dodge: a tiny browser game built from ONE prompt.
+// Prompt: "Build a tiny browser game: a neon spaceship at the bottom of the
+// screen dodges falling asteroids with arrow keys, score +1 per asteroid
+// dodged, 3 lives, game over screen, press R to restart."
+// Controls: Left/Right arrows (or A/D) to move, R to restart. Touch: drag.
+// ?autoplay=1 lets the ship steer itself (used to record the demo video).
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const AUTOPLAY = new URLSearchParams(location.search).has('autoplay');
+
+const ship = { x: W / 2, y: H - 90, w: 56, h: 44, speed: 9, invuln: 0 };
+let asteroids = [];
+let score = 0, lives = 3, state = 'ready'; // ready | playing | over
+let frame = 0, spawnEvery = 42, elapsed = 0;
+let keys = {};
+let stars = [];
+for (let i = 0; i < 90; i++) {
+  stars.push({ x: Math.random() * W, y: Math.random() * H, s: Math.random() * 2 + 0.5, v: Math.random() * 0.6 + 0.2 });
+}
+
+function reset() {
+  asteroids = [];
+  score = 0; lives = 3; frame = 0; spawnEvery = 42; elapsed = 0;
+  ship.x = W / 2; ship.invuln = 0;
+  state = 'playing';
+}
+
+function spawnAsteroid() {
+  const r = 16 + Math.random() * 26;
+  asteroids.push({
+    x: 40 + Math.random() * (W - 80),
+    y: -r - 10,
+    r: r,
+    vy: 2.2 + Math.random() * 2.4 + elapsed / 9000,
+    vx: (Math.random() - 0.5) * 1.2,
+    rot: Math.random() * Math.PI * 2,
+    vr: (Math.random() - 0.5) * 0.05,
+    hue: 320 + Math.random() * 40
+  });
+}
+
+function hit(a) {
+  // circle vs ship box, forgiving by 6px
+  const cx = Math.max(ship.x - ship.w / 2, Math.min(a.x, ship.x + ship.w / 2));
+  const cy = Math.max(ship.y - ship.h / 2, Math.min(a.y, ship.y + ship.h / 2));
+  const dx = a.x - cx, dy = a.y - cy;
+  return dx * dx + dy * dy < (a.r - 6) * (a.r - 6);
+}
+
+function autopilot() {
+  // Steer toward the widest gap among asteroids near the ship's lane.
+  let danger = null;
+  for (const a of asteroids) {
+    if (a.y > ship.y - 320 && a.y < ship.y + 40) {
+      if (!danger || a.y > danger.y) danger = a;
+    }
+  }
+  if (!danger) { // drift gently toward center
+    if (ship.x < W / 2 - 4) ship.x += ship.speed * 0.6;
+    else if (ship.x > W / 2 + 4) ship.x -= ship.speed * 0.6;
+    return;
+  }
+  const gapLeft = danger.x - danger.r - 60;
+  const gapRight = danger.x + danger.r + 60;
+  // move away from the asteroid's x
+  if (ship.x < danger.x && gapLeft > 50) ship.x -= ship.speed;
+  else if (ship.x >= danger.x && gapRight < W - 50) ship.x += ship.speed;
+  else if (ship.x < danger.x) ship.x += ship.speed;
+  else ship.x -= ship.speed;
+  ship.x = Math.max(ship.w / 2 + 8, Math.min(W - ship.w / 2 - 8, ship.x));
+}
+
+function update() {
+  frame++;
+  for (const s of stars) { s.y += s.v; if (s.y > H) { s.y = 0; s.x = Math.random() * W; } }
+  if (state !== 'playing') return;
+  elapsed++;
+  if (ship.invuln > 0) ship.invuln--;
+  if (frame % spawnEvery === 0) spawnAsteroid();
+  if (frame % 600 === 0 && spawnEvery > 24) spawnEvery -= 2;
+
+  if (AUTOPLAY) autopilot();
+  else {
+    if ((keys['ArrowLeft'] || keys['a'] || keys['A']) && ship.x > ship.w / 2 + 8) ship.x -= ship.speed;
+    if ((keys['ArrowRight'] || keys['d'] || keys['D']) && ship.x < W - ship.w / 2 - 8) ship.x += ship.speed;
+  }
+
+  for (let i = asteroids.length - 1; i >= 0; i--) {
+    const a = asteroids[i];
+    a.y += a.vy; a.x += a.vx; a.rot += a.vr;
+    if (a.y - a.r > H) { asteroids.splice(i, 1); score++; continue; }
+    if (ship.invuln === 0 && hit(a)) {
+      asteroids.splice(i, 1);
+      lives--;
+      ship.invuln = 90;
+      if (lives <= 0) state = 'over';
+    }
+  }
+}
+
+function drawShip() {
+  if (ship.invuln > 0 && Math.floor(frame / 6) % 2 === 0) return; // blink while invulnerable
+  ctx.save();
+  ctx.translate(ship.x, ship.y);
+  ctx.shadowColor = '#00f0ff'; ctx.shadowBlur = 18;
+  ctx.fillStyle = '#00f0ff';
+  ctx.beginPath();
+  ctx.moveTo(0, -ship.h / 2);
+  ctx.lineTo(ship.w / 2, ship.h / 2);
+  ctx.lineTo(0, ship.h / 4);
+  ctx.lineTo(-ship.w / 2, ship.h / 2);
+  ctx.closePath(); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#ff2d78';
+  ctx.beginPath(); ctx.arc(0, -2, 6, 0, Math.PI * 2); ctx.fill();
+  // engine flame
+  const fl = 14 + Math.sin(frame * 0.4) * 6;
+  ctx.fillStyle = '#ffb300';
+  ctx.beginPath();
+  ctx.moveTo(-8, ship.h / 2);
+  ctx.lineTo(0, ship.h / 2 + fl);
+  ctx.lineTo(8, ship.h / 2);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function drawAsteroid(a) {
+  ctx.save();
+  ctx.translate(a.x, a.y); ctx.rotate(a.rot);
+  ctx.shadowColor = '#ff2d78'; ctx.shadowBlur = 14;
+  ctx.strokeStyle = '#ff5c9d'; ctx.lineWidth = 3;
+  ctx.fillStyle = '#2a0a1e';
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const ang = (i / 8) * Math.PI * 2;
+    const rr = a.r * (0.82 + ((i * 37) % 10) / 40);
+    const px = Math.cos(ang) * rr, py = Math.sin(ang) * rr;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#07070f'; ctx.fillRect(0, 0, W, H);
+  for (const s of stars) {
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.25 + s.s * 0.2) + ')';
+    ctx.fillRect(s.x, s.y, s.s, s.s);
+  }
+  // HUD
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 30px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('SCORE ' + score, 24, 44);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#ff2d78';
+  ctx.fillText('♥'.repeat(Math.max(lives, 0)) + '♡'.repeat(Math.max(3 - lives, 0)), W - 24, 44);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#8a8aa3';
+  ctx.font = '20px monospace';
+  ctx.fillText('NEON DODGE — one prompt, one game', W / 2, 44);
+
+  for (const a of asteroids) drawAsteroid(a);
+  if (state !== 'over') drawShip();
+
+  if (state === 'ready') {
+    ctx.fillStyle = 'rgba(7,7,15,0.72)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#00f0ff'; ctx.font = 'bold 64px monospace';
+    ctx.fillText('NEON DODGE', W / 2, H / 2 - 60);
+    ctx.fillStyle = '#ffffff'; ctx.font = '28px monospace';
+    ctx.fillText('Dodge the asteroids. 3 lives. Arrow keys / A D to move.', W / 2, H / 2 + 10);
+    ctx.fillStyle = '#ffb300'; ctx.font = 'bold 30px monospace';
+    ctx.fillText(AUTOPLAY ? 'Auto-play demo starting…' : 'Press any key to start', W / 2, H / 2 + 70);
+  } else if (state === 'over') {
+    ctx.fillStyle = 'rgba(7,7,15,0.78)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#ff2d78'; ctx.font = 'bold 64px monospace';
+    ctx.fillText('GAME OVER', W / 2, H / 2 - 40);
+    ctx.fillStyle = '#ffffff'; ctx.font = '32px monospace';
+    ctx.fillText('Final score: ' + score, W / 2, H / 2 + 30);
+    ctx.fillStyle = '#00f0ff'; ctx.font = '26px monospace';
+    ctx.fillText('Press R to play again', W / 2, H / 2 + 90);
+  }
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('keydown', (e) => {
+  keys[e.key] = true;
+  if (state === 'ready') reset();
+  else if (state === 'over' && (e.key === 'r' || e.key === 'R')) reset();
+  if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(e.key)) e.preventDefault();
+});
+window.addEventListener('keyup', (e) => { keys[e.key] = false; });
+canvas.addEventListener('pointerdown', (e) => {
+  if (state === 'ready' || state === 'over') { reset(); return; }
+  const rect = canvas.getBoundingClientRect();
+  const tx = (e.clientX - rect.left) * (W / rect.width);
+  ship.x = Math.max(ship.w / 2 + 8, Math.min(W - ship.w / 2 - 8, tx));
+});
+
+if (AUTOPLAY) setTimeout(reset, 600);
+loop();
+</script>
+</body>
+</html>
