@@ -10,7 +10,7 @@
 //   mkdir -p out && MAKEFUN_BOT_DIR=. MAKEFUN_OUTPUT_DIR=out node main.ts
 // The grader runs it with MAKEFUN_BOT_DIR=/bot and MAKEFUN_OUTPUT_DIR=/output.
 
-import { copyFileSync, mkdirSync, existsSync } from 'node:fs';
+import { copyFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const botDir = process.env.MAKEFUN_BOT_DIR ?? '/bot';
@@ -26,4 +26,12 @@ if (!existsSync(source)) {
 
 mkdirSync(outputDir, { recursive: true });
 copyFileSync(source, target);
+
+// Verify the copy landed intact: a truncated or partial write would hand
+// the grader a broken POST.json, so compare bytes and fail loudly instead
+// of silently passing a corrupt file on.
+if (!readFileSync(target).equals(readFileSync(source))) {
+  console.error(`POST.json copy to ${target} is incomplete or corrupted.`);
+  process.exit(1);
+}
 console.log(`POST.json copied to ${target}`);
